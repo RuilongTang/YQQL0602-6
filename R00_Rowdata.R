@@ -1,6 +1,6 @@
 rm(list = ls())
 
-setwd("/data/nas1/yuanyt/project/05.YQQL-0602-6/")
+setwd("")
 if (! dir.exists("./00_Rowdata")){
   dir.create("./00_Rowdata")
 }
@@ -12,7 +12,7 @@ library(readxl)
 library(tidyverse)
 
 
-protein <- read.table("/data/nas1/xieyunpeng/project/pipeline/PCG/protein_coding.txt",header = T,sep = "\t")
+protein <- read.table("protein_coding.txt",header = T,sep = "\t")
 
 ### 01 Data processing
 ###Read the data downloaded from xena count
@@ -26,7 +26,7 @@ tcga.expr <- 2^tcga.expr-1
 
 
 ## Perform id conversion on the data
-genecode<-read.table(file = '/data/nas1/luchunlin/pipeline/GENEANNO/gencode.v22.annotation.gene.probeMap')
+genecode<-read.table(file = 'gencode.v22.annotation.gene.probeMap')
 probe2symbol<-genecode[,(1:2)]
 colnames(probe2symbol)<-c('ID','symbol')
 probe2symbol<-probe2symbol[-1,]
