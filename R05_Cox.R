@@ -1,539 +1,159 @@
 rm(list = ls())
 
 setwd("")
-if (! dir.exists("./00_Rowdata")){
-  dir.create("./00_Rowdata")
+if (! dir.exists("./05_Cox")){
+  dir.create("./05_Cox")
 }
-setwd("./00_Rowdata")
-
-library(TCGAbiolinks)
-library(readr)
-library(readxl)
-library(tidyverse)
-
-
-protein <- read.table("protein_coding.txt",header = T,sep = "\t")
-
-### 01 Data processing
-###Read the data downloaded from xena count
-tcga.COAD.expr <- read_tsv("../00_Rowdata/TCGA-COAD.htseq_counts.tsv.gz")
-tcga.READ.expr <- read_tsv("../00_Rowdata/TCGA-READ.htseq_counts.tsv.gz")
-tcga.expr <- merge(tcga.COAD.expr,tcga.READ.expr,by="Ensembl_ID")
-tcga.expr<-as.data.frame(tcga.expr)
-rownames(tcga.expr)<-tcga.expr[,1]
-tcga.expr<-tcga.expr[,-1]
-tcga.expr <- 2^tcga.expr-1
-
-
-## Perform id conversion on the data
-genecode<-read.table(file = 'gencode.v22.annotation.gene.probeMap')
-probe2symbol<-genecode[,(1:2)]
-colnames(probe2symbol)<-c('ID','symbol')
-probe2symbol<-probe2symbol[-1,]
-dat.tcga<-tcga.expr
-dat.tcga$ID <- rownames(dat.tcga)
-dat.tcga$ID<-as.character(dat.tcga$ID)
-probe2symbol$ID<-as.character(probe2symbol$ID)
-
-####Table data processing
-dat.tcga<-dat.tcga %>%
-  inner_join(probe2symbol,by='ID')%>% 
-  dplyr::select(-ID)%>%     ## Remove redundant information
-  dplyr::select(symbol,everything())%>%     ## Rearrange
-  mutate(rowMean=rowMeans(.[grep('TCGA',names(.))]))%>%    ## Calculate the average
-  arrange(desc(rowMean))%>%       ## Sort the average values of the expressions from largest to smallest
-  distinct(symbol,.keep_all = T)%>%      ##symbol left the first one
-  dplyr::select(-rowMean)%>%     ## Reverse selection removes the column "rowMean"
-  tibble::column_to_rownames(colnames(.)[1])   ## Change the first column to the row name and delete it
-dim(dat.tcga)
-
-
-### get mRNA
-dat.tcga <- dat.tcga[rownames(dat.tcga)%in%protein$gene_name,]
-
-
-### Screen cancerous tissues and remove adjacent tissues. 01 to 09 are tumors, and 10 to 19 are normal controls
-group <- data.frame(colnames(dat.tcga))  # Take the sample id of the first row
-for (i in 1:length(group[,1])) {
-  num=as.numeric(as.character(substring(group[i,1],14,15)))
-  if(num %in% seq(1,9)){group[i,2]="CRC"}
-  if(num %in% seq(10,29)){group[i,2]="Control"}
-}
-
-
-###tumor group
-names(group) <- c("id","group")
-group$group <- as.factor(group$group)
-exp_group <- group$id[which(group$group == "CRC")]
-exp_tumor<-dat.tcga[,which(colnames(dat.tcga) %in% exp_group)]
-exp_tumor<-as.data.frame(exp_tumor)  
-
-###control group
-exp_control<-dat.tcga[,which(!colnames(dat.tcga)%in%exp_group)]
-exp_control<-as.data.frame(exp_control)
-control.sample<-colnames(exp_control)
-tumor.sample<-colnames(exp_tumor)
-
-dat.final<-cbind(exp_control,exp_tumor)
-write.csv(dat.final,file = 'dat.tcga.csv')
-write.csv(exp_tumor,file = 'tumor.tcga.csv')
-write.csv(group,file = 'tcga.group.csv')
-
-
-###fpkm
-fpkm.COAD.expr <- read_tsv("../00_Rowdata/TCGA-COAD.htseq_fpkm.tsv.gz")
-fpkm.READ.expr <- read_tsv("../00_Rowdata/TCGA-READ.htseq_fpkm.tsv.gz")
-fpkm.expr <- merge(fpkm.COAD.expr,fpkm.READ.expr,by="Ensembl_ID")
-fpkm.expr<-as.data.frame(fpkm.expr)
-rownames(fpkm.expr)<-fpkm.expr[,1]
-fpkm.expr<-fpkm.expr[,-1]
-fpkm.expr <- 2^fpkm.expr-1
-
-## Perform id conversion on the data
-dat_fpkm<-fpkm.expr
-dat_fpkm$ID <- rownames(dat_fpkm)
-dat_fpkm$ID<-as.character(dat_fpkm$ID)
-probe2symbol$ID<-as.character(probe2symbol$ID)
-
-dat_fpkm<-dat_fpkm %>%
-  inner_join(probe2symbol,by='ID')%>% 
-  dplyr::select(-ID)%>%     ##  Remove redundant information
-  dplyr::select(symbol,everything())%>%     ##  Rearrange
-  mutate(rowMean=rowMeans(.[grep('TCGA',names(.))]))%>%    ##  Calculate the average
-  arrange(desc(rowMean))%>%       ##  Sort the average values of the expressions from largest to smallest
-  distinct(symbol,.keep_all = T)%>%      ## symbol left the first one
-  dplyr::select(-rowMean)%>%     ##  Reverse selection removes the column "rowMean"
-  tibble::column_to_rownames(colnames(.)[1])   ##  Change the first column to the row name and delete it
-dim(dat_fpkm)
-
-####mRNA
-dat_fpkm <- dat_fpkm[rownames(dat_fpkm)%in%protein$gene_name,]
-
-
-
-###tumor group
-exp_tumor<-dat_fpkm[,which(colnames(dat_fpkm)%in%exp_group)]
-exp_tumor<-as.data.frame(exp_tumor)  
-
-###control group
-exp_control<-dat_fpkm[,which(!colnames(dat_fpkm)%in%exp_group)]
-exp_control<-as.data.frame(exp_control)
-control.sample<-colnames(exp_control)
-tumor.sample<-colnames(exp_tumor)
-
-
-dat.final<-cbind(exp_control,exp_tumor)
-write.csv(dat.final,file = 'fpkm.tcga.csv')
-write.csv(exp_tumor,file = 'fpkm.tumor.csv')
-
-
-
-###Read the data downloaded from GEO
-library(GEOquery)
-library(tidyverse)
-library(lance)
-
-###GSE103479--------------------------------
-gset<-getGEO("GSE103479",
-             destdir = '.',
-             GSEMatrix = T,
-             getGPL = F)
-
-expr<-as.data.frame(exprs(gset[[1]]))
-gpl<-getGEO("GPL23985",destdir = '.')
-a=gset[[1]]
-gpl<-Table(gpl)    
-colnames(gpl)
-probe2symobl<-gpl %>%
-  dplyr::select('ID','Gene.Symbol')%>%
-  filter('Gene.Symbol'!='')%>%
-  separate('Gene.Symbol',c('symbol','drop'),sep = '///')%>%
-  dplyr::select(-drop)
-probe2symobl=probe2symobl[probe2symobl$symbol!='',]
-dat<-expr
-dat$ID<-rownames(dat)
-dat$ID<-as.character(dat$ID)
-probe2symobl$ID<-as.character(probe2symobl$ID)
-library(tidyverse)
-dat<-dat %>%
-  inner_join(probe2symobl,by='ID')%>% 
-  dplyr::select(-ID)%>%     ##  Remove redundant information
-  dplyr::select(symbol,everything())%>%     ##  Rearrange
-  mutate(rowMean=rowMeans(.[grep('GSM',names(.))]))%>%    ## Calculate the average
-  arrange(desc(rowMean))%>%       ##  Sort the average values of the expressions from largest to smallest
-  distinct(symbol,.keep_all = T)%>%      ## symbol left the first one
-  dplyr::select(-rowMean)%>%     ## Reverse selection removes the column "rowMean"
-  tibble::column_to_rownames(colnames(.)[1])   ## Change the first column to the row name and delete it
-
-
-
-###Group information
-pd<-pData(a)
-survival<-data.frame(sample=pd$geo_accession,
-                  OS = pd$`status alive.dead:ch1`,
-                  OS.time = pd$`overall survival time:ch1`)
-survival <- survival[which(survival$OS.time != "NA"),]
-
-table(survival$OS)
-library(stringr)
-survival$OS<-ifelse(survival$OS=='Alive','0','1')
-survival$OS.time<- as.numeric(survival$OS.time) * 30
-
-dat<-dat[,survival$sample]
-write.csv(dat,file = 'dat(GSE103479).csv')
-write.csv(survival,file = 'survival(GSE103479).csv')
-
-
-
-
-###GSE17536----------------------
-gset<-getGEO("GSE17536",
-             destdir = '.',
-             GSEMatrix = T,
-             getGPL = F)
-
-expr<-as.data.frame(exprs(gset[[1]]))
-gpl<-getGEO("GPL570",destdir = '.')
-a=gset[[1]]
-gpl<-Table(gpl)    
-colnames(gpl)
-probe2symobl<-gpl %>%
-  dplyr::select('ID','Gene Symbol')%>%
-  filter('Gene Symbol'!='')%>%
-  separate('Gene Symbol',c('symbol','drop'),sep = '///')%>%
-  dplyr::select(-drop)
-probe2symobl=probe2symobl[probe2symobl$symbol!='',]
-dat<-expr
-dat$ID<-rownames(dat)
-dat$ID<-as.character(dat$ID)
-probe2symobl$ID<-as.character(probe2symobl$ID)
-library(tidyverse)
-dat<-dat %>%
-  inner_join(probe2symobl,by='ID')%>% 
-  dplyr::select(-ID)%>%     ##  Remove redundant information
-  dplyr::select(symbol,everything())%>%     ##  Rearrange
-  mutate(rowMean=rowMeans(.[grep('GSM',names(.))]))%>%    ## Calculate the average
-  arrange(desc(rowMean))%>%       ##  Sort the average values of the expressions from largest to smallest
-  distinct(symbol,.keep_all = T)%>%      ## symbol left the first one
-  dplyr::select(-rowMean)%>%     ## Reverse selection removes the column "rowMean"
-  tibble::column_to_rownames(colnames(.)[1])   ## Change the first column to the row name and delete it
-
-
-###Group information
-pd<-pData(a)
-survival<-data.frame(sample=pd$geo_accession,
-                     OS = pd$`overall_event (death from any cause):ch1`,
-                     OS.time = pd$`overall survival follow-up time:ch1`)
-survival <- survival[which(survival$OS.time != "NA"),]
-
-table(survival$OS)
-library(stringr)
-survival$OS<-ifelse(survival$OS=='no death','0','1')
-survival$OS.time<- as.numeric(survival$OS.time) * 30
-
-dat<-dat[,survival$sample]
-write.csv(dat,file = 'dat(GSE17536).csv')
-write.csv(survival,file = 'survival(GSE17536).csv')
-
-
-###GSE17537----------------------
-gset<-getGEO("GSE17537",
-             destdir = '.',
-             GSEMatrix = T,
-             getGPL = F)
-
-expr<-as.data.frame(exprs(gset[[1]]))
-gpl<-getGEO("GPL570",destdir = '.')
-a=gset[[1]]
-gpl<-Table(gpl)    
-colnames(gpl)
-probe2symobl<-gpl %>%
-  dplyr::select('ID','Gene Symbol')%>%
-  filter('Gene Symbol'!='')%>%
-  separate('Gene Symbol',c('symbol','drop'),sep = '///')%>%
-  dplyr::select(-drop)
-probe2symobl=probe2symobl[probe2symobl$symbol!='',]
-dat<-expr
-dat$ID<-rownames(dat)
-dat$ID<-as.character(dat$ID)
-probe2symobl$ID<-as.character(probe2symobl$ID)
-library(tidyverse)
-dat<-dat %>%
-  inner_join(probe2symobl,by='ID')%>% 
-  dplyr::select(-ID)%>%     ##  Remove redundant information
-  dplyr::select(symbol,everything())%>%     ##  Rearrange
-  mutate(rowMean=rowMeans(.[grep('GSM',names(.))]))%>%    ## Calculate the average
-  arrange(desc(rowMean))%>%       ##  Sort the average values of the expressions from largest to smallest
-  distinct(symbol,.keep_all = T)%>%      ## symbol left the first one
-  dplyr::select(-rowMean)%>%     ## Reverse selection removes the column "rowMean"
-  tibble::column_to_rownames(colnames(.)[1])   ## Change the first column to the row name and delete it
-
-
-###Group information
-pd<-pData(a)
-survival<-data.frame(sample=pd$geo_accession,
-                     OS = pd$`overall_event (death from any cause):ch1`,
-                     OS.time = pd$`overall survival follow-up time:ch1`)
-survival <- survival[which(survival$OS.time != "NA"),]
-
-table(survival$OS)
-library(stringr)
-survival$OS<-ifelse(survival$OS=='no death','0','1')
-survival$OS.time<- as.numeric(survival$OS.time) * 30
-
-dat<-dat[,survival$sample]
-write.csv(dat,file = 'dat(GSE17537).csv')
-write.csv(survival,file = 'survival(GSE17537).csv')
-
-
-###GSE17538----------------------
-gset<-getGEO("GSE17538",
-             destdir = '.',
-             GSEMatrix = T,
-             getGPL = F)
-
-expr<-as.data.frame(exprs(gset[[2]]))
-gpl<-getGEO("GPL570",destdir = '.')
-a=gset[[2]]
-gpl<-Table(gpl)    
-colnames(gpl)
-probe2symobl<-gpl %>%
-  dplyr::select('ID','Gene Symbol')%>%
-  filter('Gene Symbol'!='')%>%
-  separate('Gene Symbol',c('symbol','drop'),sep = '///')%>%
-  dplyr::select(-drop)
-probe2symobl=probe2symobl[probe2symobl$symbol!='',]
-dat<-expr
-dat$ID<-rownames(dat)
-dat$ID<-as.character(dat$ID)
-probe2symobl$ID<-as.character(probe2symobl$ID)
-library(tidyverse)
-dat<-dat %>%
-  inner_join(probe2symobl,by='ID')%>% 
-  dplyr::select(-ID)%>%     ##  Remove redundant information
-  dplyr::select(symbol,everything())%>%     ##  Rearrange
-  mutate(rowMean=rowMeans(.[grep('GSM',names(.))]))%>%    ## Calculate the average
-  arrange(desc(rowMean))%>%       ##  Sort the average values of the expressions from largest to smallest
-  distinct(symbol,.keep_all = T)%>%      ## symbol left the first one
-  dplyr::select(-rowMean)%>%     ## Reverse selection removes the column "rowMean"
-  tibble::column_to_rownames(colnames(.)[1])   ## Change the first column to the row name and delete it
-
-
-###Group information
-pd<-pData(a)
-survival<-data.frame(sample=pd$geo_accession,
-                     OS = pd$`overall_event (death from any cause):ch1`,
-                     OS.time = pd$`overall survival follow-up time:ch1`)
-survival <- survival[which(survival$OS.time != "NA"),]
-
-table(survival$OS)
-library(stringr)
-survival$OS<-ifelse(survival$OS=='no death','0','1')
-survival$OS.time<- as.numeric(survival$OS.time) * 30
-
-dat<-dat[,survival$sample]
-write.csv(dat,file = 'dat(GSE17538).csv')
-write.csv(survival,file = 'survival(GSE17538).csv')
-
-
-###GSE28722----------------------
-gset<-getGEO("GSE28722",
-             destdir = '.',
-             GSEMatrix = T,
-             getGPL = F)
-
-expr<-as.data.frame(exprs(gset[[1]]))
-gpl<-getGEO("GPL13425",destdir = '.')
-a=gset[[1]]
-gpl<-Table(gpl)    
-colnames(gpl)
-probe2symobl<-gpl %>%
-  dplyr::select('ID','ORF')%>%
-  filter('ORF'!='')%>%
-  separate('ORF',c('symbol','drop'),sep = '///')%>%
-  dplyr::select(-drop)
-probe2symobl=probe2symobl[probe2symobl$symbol!='',]
-dat<-expr
-dat$ID<-rownames(dat)
-dat$ID<-as.character(dat$ID)
-probe2symobl$ID<-as.character(probe2symobl$ID)
-library(tidyverse)
-dat<-dat %>%
-  inner_join(probe2symobl,by='ID')%>% 
-  dplyr::select(-ID)%>%     ##  Remove redundant information
-  dplyr::select(symbol,everything())%>%     ##  Rearrange
-  mutate(rowMean=rowMeans(.[grep('GSM',names(.))]))%>%    ## Calculate the average
-  arrange(desc(rowMean))%>%       ##  Sort the average values of the expressions from largest to smallest
-  distinct(symbol,.keep_all = T)%>%      ## symbol left the first one
-  dplyr::select(-rowMean)%>%     ## Reverse selection removes the column "rowMean"
-  tibble::column_to_rownames(colnames(.)[1])   ## Change the first column to the row name and delete it
-
-
-###Group information
-pd<-pData(a)
-survival<-data.frame(sample=pd$geo_accession,
-                     OS = pd$`overall survival censor (1-censored,0-non-censored):ch2`,
-                     OS.time = pd$`overall survival (years):ch2`)
-survival <- survival[which(survival$OS.time != "NA"),]
-
-table(survival$OS)
-library(stringr)
-survival$OS.time<- as.numeric(survival$OS.time) * 365
-
-dat<-dat[,survival$sample]
-write.csv(dat,file = 'dat(GSE28722).csv')
-write.csv(survival,file = 'survival(GSE28722).csv')
-
-
-###GSE29621----------------------
-gset<-getGEO("GSE29621",
-             destdir = '.',
-             GSEMatrix = T,
-             getGPL = F)
-
-expr<-as.data.frame(exprs(gset[[1]]))
-gpl<-getGEO("GPL570",destdir = '.')
-a=gset[[1]]
-gpl<-Table(gpl)    
-colnames(gpl)
-probe2symobl<-gpl %>%
-  dplyr::select('ID','Gene Symbol')%>%
-  filter('Gene Symbol'!='')%>%
-  separate('Gene Symbol',c('symbol','drop'),sep = '///')%>%
-  dplyr::select(-drop)
-probe2symobl=probe2symobl[probe2symobl$symbol!='',]
-dat<-expr
-dat$ID<-rownames(dat)
-dat$ID<-as.character(dat$ID)
-probe2symobl$ID<-as.character(probe2symobl$ID)
-library(tidyverse)
-dat<-dat %>%
-  inner_join(probe2symobl,by='ID')%>% 
-  dplyr::select(-ID)%>%     ##  Remove redundant information
-  dplyr::select(symbol,everything())%>%     ##  Rearrange
-  mutate(rowMean=rowMeans(.[grep('GSM',names(.))]))%>%    ## Calculate the average
-  arrange(desc(rowMean))%>%       ##  Sort the average values of the expressions from largest to smallest
-  distinct(symbol,.keep_all = T)%>%      ## symbol left the first one
-  dplyr::select(-rowMean)%>%     ## Reverse selection removes the column "rowMean"
-  tibble::column_to_rownames(colnames(.)[1])   ## Change the first column to the row name and delete it
-
-
-###Group information
-pd<-pData(a)
-survival<-data.frame(sample=pd$geo_accession,
-                     OS = pd$`os event:ch1`,
-                     OS.time = pd$`overall survival (os):ch1`)
-survival <- survival[which(survival$OS.time != "NA"),]
-
-table(survival$OS)
-library(stringr)
-survival$OS<-ifelse(survival$OS=='alive','0','1')
-survival$OS.time<- as.numeric(survival$OS.time) * 30
-
-dat<-dat[,survival$sample]
-write.csv(dat,file = 'dat(GSE29621).csv')
-write.csv(survival,file = 'survival(GSE29621).csv')
-
-
-###GSE72970----------------------
-gset<-getGEO("GSE72970",
-             destdir = '.',
-             GSEMatrix = T,
-             getGPL = F)
-
-expr<-as.data.frame(exprs(gset[[1]]))
-gpl<-getGEO("GPL570",destdir = '.')
-a=gset[[1]]
-gpl<-Table(gpl)    
-colnames(gpl)
-probe2symobl<-gpl %>%
-  dplyr::select('ID','Gene Symbol')%>%
-  filter('Gene Symbol'!='')%>%
-  separate('Gene Symbol',c('symbol','drop'),sep = '///')%>%
-  dplyr::select(-drop)
-probe2symobl=probe2symobl[probe2symobl$symbol!='',]
-dat<-expr
-dat$ID<-rownames(dat)
-dat$ID<-as.character(dat$ID)
-probe2symobl$ID<-as.character(probe2symobl$ID)
-library(tidyverse)
-dat<-dat %>%
-  inner_join(probe2symobl,by='ID')%>% 
-  dplyr::select(-ID)%>%     ##  Remove redundant information
-  dplyr::select(symbol,everything())%>%     ##  Rearrange
-  mutate(rowMean=rowMeans(.[grep('GSM',names(.))]))%>%    ## Calculate the average
-  arrange(desc(rowMean))%>%       ##  Sort the average values of the expressions from largest to smallest
-  distinct(symbol,.keep_all = T)%>%      ## symbol left the first one
-  dplyr::select(-rowMean)%>%     ## Reverse selection removes the column "rowMean"
-  tibble::column_to_rownames(colnames(.)[1])   ## Change the first column to the row name and delete it
-
-
-###Group information
-pd<-pData(a)
-survival<-data.frame(sample=pd$geo_accession,
-                     OS = pd$`os censored:ch1`,
-                     OS.time = pd$`os:ch1`)
-survival <- survival[which(survival$OS.time != "NA"),]
-
-table(survival$OS)
-library(stringr)
-survival$OS.time<- as.numeric(survival$OS.time) * 30
-
-dat<-dat[,survival$sample]
-write.csv(dat,file = 'dat(GSE72970).csv')
-write.csv(survival,file = 'survival(GSE72970).csv')
-
-
-###GSE39582-----------------
-gset<-getGEO("GSE39582",
-             destdir = '.',
-             GSEMatrix = T,
-             getGPL = F)
-
-expr<-as.data.frame(exprs(gset[[1]]))
-gpl<-getGEO("GPL570",destdir = '.')
-a=gset[[1]]
-gpl<-Table(gpl)    
-colnames(gpl)
-probe2symobl<-gpl %>%
-  dplyr::select('ID','Gene Symbol')%>%
-  filter('Gene Symbol'!='')%>%
-  separate('Gene Symbol',c('symbol','drop'),sep = '///')%>%
-  dplyr::select(-drop)
-probe2symobl=probe2symobl[probe2symobl$symbol!='',]
-dat<-expr
-dat$ID<-rownames(dat)
-dat$ID<-as.character(dat$ID)
-probe2symobl$ID<-as.character(probe2symobl$ID)
-library(tidyverse)
-dat<-dat %>%
-  inner_join(probe2symobl,by='ID')%>% 
-  dplyr::select(-ID)%>%     ##  Remove redundant information
-  dplyr::select(symbol,everything())%>%     ##  Rearrange
-  mutate(rowMean=rowMeans(.[grep('GSM',names(.))]))%>%    ## Calculate the average
-  arrange(desc(rowMean))%>%       ##  Sort the average values of the expressions from largest to smallest
-  distinct(symbol,.keep_all = T)%>%      ## symbol left the first one
-  dplyr::select(-rowMean)%>%     ## Reverse selection removes the column "rowMean"
-  tibble::column_to_rownames(colnames(.)[1])   ## Change the first column to the row name and delete it
-
-
-###Group information
-pd<-pData(a)
-survival<-data.frame(sample=pd$geo_accession,
-                     OS = pd$`os.event:ch1`,
-                     OS.time = pd$`os.delay (months):ch1`)
-survival <- survival[which(survival$OS != "N/A"),]
-
-table(survival$OS)
-library(stringr)
-survival$OS.time<- as.numeric(survival$OS.time) * 30
-
-dat<-dat[,survival$sample]
-write.csv(dat,file = 'dat(GSE39582).csv')
-write.csv(survival,file = 'survival(GSE39582).csv')
-
-
-
-
-
+setwd("./05_Cox")
+
+
+# 01 Obtain the dataset----------
+data <- read.csv("../00_Rowdata/fpkm.tumor.csv",header=TRUE, row.names=1, check.names=FALSE)
+data <- log2(data+1)
+
+##
+gene <- read.csv("../04_Veen/candi.csv",header = T,row.names = 1)
+survival <- read.csv("../02_ssGSEA/icd.group.csv",header = T,row.names = 1)
+survival <- survival[,c(1,2,3)]
+
+
+## Merge survival data
+survival_dat<-t(data[gene$symbol,survival$sample])
+train_dat<-t(scale(t(survival_dat))) %>% data.frame()
+train_dat$sample<-rownames(train_dat)
+train_dat<-merge(survival,train_dat,by='sample')
+rownames(train_dat)<-train_dat$sample
+train_dat<-train_dat[,-1]
+colnames(train_dat)
+
+
+### Univariate cox
+library(survival)
+library(survminer)
+colnames_sum <- colnames(train_dat)
+colnames_sum <- gsub("-","_",colnames_sum)
+colnames_sum <- gsub(" ","_",colnames_sum)
+colnames(train_dat) <- colnames_sum
+covariates <- colnames_sum[-which(colnames_sum %in% c("OS", "OS.time"))]
+
+#The Surv() function generates an impact of the survival time of a surviving object on survival and constructs a survival analysis formula for each variable
+univ_formulas <- sapply(covariates,
+                        function(x) as.formula(paste("Surv(OS.time, OS)~", x)))  #as.formula(). Converts a string into a formula. Construct the formula object
+# The coxph function is used to calculate the cox model cycle for cox regression analysis on each feature
+univ_models <- lapply(univ_formulas,
+                      function(x) {coxph(x, data = train_dat)})
+
+univ_results <- lapply(univ_models,
+                       function(x){ 
+                         x <- summary(x)
+                         #Obtain p value
+                         p.value<-signif(x$wald["pvalue"], digits=3)
+                         #Obtain HR
+                         HR <-signif(x$coef[2], digits=3);
+                         #Obtain the 95% confidence interval
+                         HR.confint.lower <- signif(x$conf.int[,"lower .95"],3)
+                         HR.confint.upper <- signif(x$conf.int[,"upper .95"],3)
+                         HR <- paste0(HR, " (", 
+                                      HR.confint.lower, "-", 
+                                      HR.confint.upper, ")")
+                         res<-c(p.value,HR)
+                         names(res)<-c("p.value","HR (95% CI for HR)")
+                         return(res)
+                       })
+
+## coef is the regression coefficient b in the formula (sometimes also called the beta value). exp(coef) is the hazard ratio (HR) in the cox model.
+## z represents the wald statistic, which is coef divided by its standard error se(coef). ower.95 and upper.95 represent the 95% confidence interval of exp(coef). The narrower the confidence interval, the higher the confidence, and the more precise and truthful your experiment is.
+res_mod <- t(as.data.frame(univ_results, check.names = FALSE))
+res_mod <- as.data.frame(res_mod)
+##0.05
+res_results_0.05 <- res_mod[which(as.numeric(res_mod$p.value) < 0.05),]
+res_results_0.05 <- na.omit(res_results_0.05)
+write.csv(res_results_0.05, file = "univariate_cox_result_0.05.csv")
+dim(res_results_0.05)
+library(tidyr)
+res_results_0.05_2 <- separate(res_results_0.05, "HR (95% CI for HR)",
+                               into = c("HR", "HR.95L"),
+                               sep = " ")
+res_results_0.05_2 <- separate(res_results_0.05_2, "HR.95L",
+                               into = c("HR.95L", "HR.95H"),
+                               sep = "\\-")
+res_results_0.05_2$HR.95L <- gsub("\\(", "", res_results_0.05_2$HR.95L)
+res_results_0.05_2$HR.95H <- gsub("\\)", "", res_results_0.05_2$HR.95H)
+
+res_results_0.05_2[,1:ncol(res_results_0.05_2)] <- as.numeric(unlist(res_results_0.05_2[,1:ncol(res_results_0.05_2)]))
+
+
+hz <- paste(round(res_results_0.05_2$HR,3),
+            "(",round(res_results_0.05_2$HR.95L,3),
+            "-",round(res_results_0.05_2$HR.95H,3),")",sep = "")
+
+
+tabletext <- cbind(c(NA,"Gene",rownames(res_results_0.05_2)),
+                   c(NA,"P value",ifelse(res_results_0.05_2$p.value<0.001,
+                                         "< 0.001",
+                                         round(res_results_0.05_2$p.value,3))),
+                   c(NA,"Hazard Ratio(95% CI)",hz))
+nrow(tabletext) + 1
+library(forestplot)
+pdf(file = "univariate_cox_forest.pdf", height = 6, width = 10, onefile = F)
+forestplot(labeltext=tabletext, 
+           graph.pos=4,  #It is the position where the Pvalue box plot is located
+           is.summary = c(TRUE, TRUE,rep(FALSE, 57)),
+           col=fpColors(box="red", lines="royalblue", zero = "gray50"),
+           mean=c(NA,NA,res_results_0.05_2$HR),
+           lower=c(NA,NA,res_results_0.05_2$HR.95L), #Lower limit of the 95% confidence interval
+           upper=c(NA,NA,res_results_0.05_2$HR.95H), #Upper limit of the 95% confidence interval
+           boxsize=0.2,lwd.ci=3,   #The size of the box and the width of the line
+           ci.vertices.height = 0.08,ci.vertices=TRUE, #Confidence intervals are defined by line width, height and shape
+           zero=1,lwd.zero=0.5,    #The position of the zero line width reference line
+           colgap=unit(5,"mm"),    #Column gap
+           xticks = c(0, 1,2,3,4,5,6,7), #Horizontal coordinate scale
+           lwd.xaxis=2,            #Width of the X-axis
+           lineheight = unit(0.8,"cm"), #Fixed row height
+           graphwidth = unit(.5,"npc"), #The width ratio of the figure in the table
+           cex=0.9, fn.ci_norm = fpDrawCircleCI, #Error bar display mode
+           hrzl_lines = list("3" = gpar(col = "black", lty = 1, lwd = 2)),
+           # hrzl_lines=list("2" = gpar(lwd=2, col="black"),
+           #                 "3" = gpar(lwd=2, col="black"), #A black line is added at the top of the third line, and the numbers within the quotation marks indicate the position of the line
+           #                 "59" = gpar(lwd=2, col="black")),#At the bottom of the last line, add a black line. The number in "16" is nrow(tabletext)+1
+           # mar=unit(rep(0.01, times = 4), "cm"),#Graphic margins
+           #The cex parameter in the fpTxtGp function sets the size of each component
+           txt_gp=fpTxtGp(label=gpar(cex=1),
+                          ticks=gpar(cex=0.8, fontface = "bold"),
+                          xlab=gpar(cex = 1, fontface = "bold"),
+                          title=gpar(cex = 1.25, fontface = "bold")),
+           xlab="Hazard Ratio",
+           grid = T) # The grid lines perpendicular to the X-axis correspond to each scale
+dev.off()
+png(filename = "univariate_cox_forest.png", height = 600, width = 800)
+forestplot(labeltext=tabletext, 
+           graph.pos=4,  #It is the position where the Pvalue box plot is located
+           is.summary = c(TRUE, TRUE,rep(FALSE, 57)),
+           col=fpColors(box="red", lines="royalblue", zero = "gray50"),
+           mean=c(NA,NA,res_results_0.05_2$HR),
+           lower=c(NA,NA,res_results_0.05_2$HR.95L), #Lower limit of the 95% confidence interval
+           upper=c(NA,NA,res_results_0.05_2$HR.95H), #Upper limit of the 95% confidence interval
+           boxsize=0.2,lwd.ci=3,   #The size of the box and the width of the line
+           ci.vertices.height = 0.08,ci.vertices=TRUE, #Confidence intervals are defined by line width, height and shape
+           zero=1,lwd.zero=0.5,    #The position of the zero line width reference line
+           colgap=unit(5,"mm"),    #Column gap
+           xticks = c(0, 1,2,3,4,5,6,7), #Horizontal coordinate scale
+           lwd.xaxis=2,            #Width of the X-axis
+           lineheight = unit(0.8,"cm"), #Fixed row height
+           graphwidth = unit(.5,"npc"), #The width ratio of the figure in the table
+           cex=0.9, fn.ci_norm = fpDrawCircleCI, #Error bar display mode
+           hrzl_lines = list("3" = gpar(col = "black", lty = 1, lwd = 2)),
+           # hrzl_lines=list("2" = gpar(lwd=2, col="black"),
+           #                 "3" = gpar(lwd=2, col="black"), #A black line is added at the top of the third line, and the numbers within the quotation marks indicate the position of the line
+           #                 "59" = gpar(lwd=2, col="black")),#At the bottom of the last line, add a black line. The number in "16" is nrow(tabletext)+1
+           # mar=unit(rep(0.01, times = 4), "cm"),#Graphic margins
+           #The cex parameter in the fpTxtGp function sets the size of each component
+           txt_gp=fpTxtGp(label=gpar(cex=1),
+                          ticks=gpar(cex=0.8, fontface = "bold"),
+                          xlab=gpar(cex = 1, fontface = "bold"),
+                          title=gpar(cex = 1.25, fontface = "bold")),
+           xlab="Hazard Ratio",
+           grid = T) # The grid lines perpendicular to the X-axis correspond to each scale
+
+dev.off()
 
