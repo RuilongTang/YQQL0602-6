@@ -1,6 +1,9 @@
+
+
+
 rm(list = ls())
 
-setwd("/data/nas1/yuanyt/project/05.YQQL-0602-6/")
+setwd("")
 if (! dir.exists("./01_DEGs")){
   dir.create("./01_DEGs")
 }
@@ -154,7 +157,7 @@ heat<-log2(heat+1)
 
 
 # mat <- as.matrix(heat)
-mat <- t(scale(t(heat)))#归一化
+mat <- t(scale(t(heat)))
 mat[mat < (-2)] <- (-2)
 mat[mat > 2] <- 2
 
