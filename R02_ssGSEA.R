@@ -1,6 +1,6 @@
 rm(list = ls())
 
-setwd("/data/nas1/yuanyt/project/05.YQQL-0602-6/")
+setwd("")
 if (! dir.exists("./02_ssGSEA")){
   dir.create("./02_ssGSEA")
 }
