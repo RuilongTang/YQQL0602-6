@@ -254,7 +254,7 @@ legend(0.55,0.2,c(paste("AUC of 1 year =",round(year_1$AUC,2)),
 dev.off()
 
 
-# 5 生存曲线 ----------
+# 5 ----------
 rt<-risk
 rt=rt[order(rt$riskscore),]
 riskClass=rt[,"risk"]
